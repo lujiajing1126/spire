@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"time"
 
 	secret_v3 "github.com/envoyproxy/go-control-plane/envoy/service/secret/v3"
 	"github.com/sirupsen/logrus"
@@ -14,8 +15,17 @@ import (
 	"github.com/spiffe/spire/pkg/common/api/middleware"
 	"github.com/spiffe/spire/pkg/common/peertracker"
 	"github.com/spiffe/spire/pkg/common/telemetry"
+	"github.com/spiffe/spire/pkg/common/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
+)
+
+const (
+	// This is the maximum amount of time an agent connection may exist before
+	// the server sends a hangup request. This enables agents to more dynamically
+	// route to the server in the case of a change in DNS membership.
+	defaultMaxConnectionAge = 3 * time.Minute
 )
 
 type Server interface {
@@ -106,6 +116,31 @@ func (e *Endpoints) ListenAndServe(ctx context.Context) error {
 	secret_v3.RegisterSecretDiscoveryServiceServer(server, e.sdsv3Server)
 	grpc_health_v1.RegisterHealthServer(server, e.healthServer)
 
+	tcpServer := e.createTCPServer(unaryInterceptor, streamInterceptor)
+	workload_pb.RegisterSpiffeWorkloadAPIServer(tcpServer, e.workloadAPIServer)
+
+	tasks := []func(context.Context) error{
+		func(ctx context.Context) error {
+			return e.runTCPServer(ctx, tcpServer)
+		},
+		func(ctx context.Context) error {
+			return e.runLocalAccess(ctx, server)
+		},
+	}
+	err := util.RunTasks(ctx, tasks...)
+	if errors.Is(err, context.Canceled) {
+		err = nil
+	}
+	return err
+}
+
+func (e *Endpoints) triggerListeningHook() {
+	if e.hooks.listening != nil {
+		e.hooks.listening <- struct{}{}
+	}
+}
+
+func (e *Endpoints) runLocalAccess(ctx context.Context, server *grpc.Server) error {
 	l, err := e.createListener()
 	if err != nil {
 		return err
@@ -127,19 +162,52 @@ func (e *Endpoints) ListenAndServe(ctx context.Context) error {
 
 	select {
 	case err = <-errChan:
+		return err
 	case <-ctx.Done():
 		e.log.Info("Stopping Workload and SDS APIs")
 		server.Stop()
-		err = <-errChan
-		if errors.Is(err, grpc.ErrServerStopped) {
-			err = nil
-		}
+		<-errChan
+		e.log.Info("Workload and SDS APIs APIs have stopped")
+		return nil
 	}
-	return err
 }
 
-func (e *Endpoints) triggerListeningHook() {
-	if e.hooks.listening != nil {
-		e.hooks.listening <- struct{}{}
+func (e *Endpoints) createTCPServer(unaryInterceptor grpc.UnaryServerInterceptor, streamInterceptor grpc.StreamServerInterceptor) *grpc.Server {
+	return grpc.NewServer(
+		grpc.UnaryInterceptor(unaryInterceptor),
+		grpc.StreamInterceptor(streamInterceptor),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge: defaultMaxConnectionAge,
+		}),
+	)
+}
+
+// runTCPServer will start the server and block until it exits or we are dying.
+func (e *Endpoints) runTCPServer(ctx context.Context, server *grpc.Server) error {
+	l, err := net.Listen("tcp", "127.0.0.1:8082")
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	log := e.log.WithFields(logrus.Fields{
+		telemetry.Network: l.Addr().Network(),
+		telemetry.Address: l.Addr().String(),
+	})
+
+	// Skip use of tomb here so we don't pollute a clean shutdown with errors
+	log.Info("Starting Agent APIs")
+	errChan := make(chan error)
+	go func() { errChan <- server.Serve(l) }()
+
+	select {
+	case err = <-errChan:
+		log.WithError(err).Error("Agent APIs stopped prematurely")
+		return err
+	case <-ctx.Done():
+		log.Info("Stopping Agent APIs")
+		server.Stop()
+		<-errChan
+		log.Info("Agent APIs have stopped")
+		return nil
 	}
 }
