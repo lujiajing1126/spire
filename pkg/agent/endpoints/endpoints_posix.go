@@ -40,7 +40,7 @@ func (e *Endpoints) createListener() (net.Listener, error) {
 }
 
 func (e *Endpoints) createListenerFor(addr net.Addr) (net.Listener, error) {
-	switch e.addr.Network() {
+	switch addr.Network() {
 	case "unix":
 		return createUDSListener(e.log, addr)
 	case "tcp":
