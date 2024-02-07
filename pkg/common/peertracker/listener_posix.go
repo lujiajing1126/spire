@@ -6,6 +6,7 @@ import "net"
 
 type ListenerFactoryOS struct {
 	NewUnixListener func(network string, laddr *net.UnixAddr) (*net.UnixListener, error)
+	NewTCPListener  func(network string, laddr *net.TCPAddr) (*net.TCPListener, error)
 }
 
 func (lf *ListenerFactory) ListenUnix(network string, laddr *net.UnixAddr) (*Listener, error) {

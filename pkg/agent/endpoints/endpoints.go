@@ -3,6 +3,7 @@ package endpoints
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 
@@ -185,7 +186,11 @@ func (e *Endpoints) createTCPServer(unaryInterceptor grpc.UnaryServerInterceptor
 
 // runTCPServer will start the server and block until it exits or we are dying.
 func (e *Endpoints) runTCPServer(ctx context.Context, server *grpc.Server) error {
-	l, err := net.Listen("tcp", "0.0.0.0:8082")
+	tcpAddr, err := net.ResolveTCPAddr("tcp", "0.0.0.0:8082")
+	if err != nil {
+		return err
+	}
+	l, err := e.createListenerFor(tcpAddr)
 	if err != nil {
 		return err
 	}
@@ -211,4 +216,21 @@ func (e *Endpoints) runTCPServer(ctx context.Context, server *grpc.Server) error
 		log.Info("Agent APIs have stopped")
 		return nil
 	}
+}
+
+func createTCPListener(log logrus.FieldLogger, addr net.Addr) (net.Listener, error) {
+	listener := &peertracker.ListenerFactory{
+		Log: log,
+	}
+
+	tcpAddr, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return nil, fmt.Errorf("create TCP listener: address is type %T, not net.TCPAddr", addr)
+	}
+	l, err := listener.Listen(addr.Network(), tcpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("create TCP listener: %w", err)
+	}
+
+	return l, nil
 }
