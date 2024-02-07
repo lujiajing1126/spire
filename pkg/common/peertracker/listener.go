@@ -75,6 +75,8 @@ func (l *Listener) Accept() (net.Conn, error) {
 			caller, err = CallerFromUDSConn(conn)
 		case "pipe":
 			caller, err = CallerFromNamedPipeConn(conn)
+		case "tcp":
+			caller, err = CallerFromTCPConn(conn)
 		default:
 			err = ErrUnsupportedTransport
 		}
