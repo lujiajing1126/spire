@@ -184,7 +184,7 @@ func (e *Endpoints) createTCPServer(unaryInterceptor grpc.UnaryServerInterceptor
 
 // runTCPServer will start the server and block until it exits or we are dying.
 func (e *Endpoints) runTCPServer(ctx context.Context, server *grpc.Server) error {
-	l, err := net.Listen("tcp", "127.0.0.1:8082")
+	l, err := net.Listen("tcp", "0.0.0.0:8082")
 	if err != nil {
 		return err
 	}
