@@ -174,6 +174,7 @@ func (e *Endpoints) runLocalAccess(ctx context.Context, server *grpc.Server) err
 
 func (e *Endpoints) createTCPServer(unaryInterceptor grpc.UnaryServerInterceptor, streamInterceptor grpc.StreamServerInterceptor) *grpc.Server {
 	return grpc.NewServer(
+		grpc.Creds(peertracker.NewCredentials()),
 		grpc.UnaryInterceptor(unaryInterceptor),
 		grpc.StreamInterceptor(streamInterceptor),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
